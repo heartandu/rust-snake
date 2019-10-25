@@ -4,6 +4,8 @@ extern crate rand;
 use rand::Rng;
 use std::fmt;
 
+const SCORE_PER_MICE: u32 = 100;
+
 pub trait CanMove {
     fn do_move(&mut self);
     fn set_velocity(&mut self, velocity: Velocity);
@@ -56,9 +58,9 @@ impl Block {
         }
     }
 
-    pub fn new_random(max_x: u16, max_y: u16, symbol: char) -> Block {
+    pub fn new_random(min_x: u16, max_x: u16, min_y: u16, max_y: u16, symbol: char) -> Block {
         let mut rng = rand::thread_rng();
-        Block::new(rng.gen_range(1, max_x), rng.gen_range(1, max_y), symbol)
+        Block::new(rng.gen_range(min_x, max_x), rng.gen_range(min_y, max_y), symbol)
     }
 }
 
@@ -94,8 +96,12 @@ pub struct Mice {
 }
 
 impl Mice {
-    pub fn new(max_x: u16, max_y: u16) -> Mice {
-        Mice { block: Block::new_random(max_x, max_y, 'O') }
+    pub fn new(min_x: u16, max_x: u16, min_y: u16, max_y: u16) -> Mice {
+        Mice { block: Block::new_random(min_x, max_x, min_y, max_y, 'O') }
+    }
+
+    pub fn new_in_screen(screen: &Screen) -> Mice {
+        Mice::new(screen.min_x, screen.max_x, screen.min_y, screen.max_y)
     }
 }
 
@@ -112,14 +118,20 @@ pub struct Snake {
 
 impl Snake {
     pub fn new(x: u16, y: u16) -> Snake {
-        Snake {
+        let mut snake = Snake {
             head: Block::new(x, y, 'O'),
-            tail: vec![
-                Snake::new_tail_circle(x - 1, y),
-                Snake::new_tail_circle(x - 2, y),
-                Snake::new_tail_circle(x - 3, y),
-            ],
+            tail: vec![],
+        };
+
+        for i in 1..4 {
+            snake.tail.push(Snake::new_tail_circle(x - i, y));
         }
+
+        snake
+    }
+
+    pub fn new_in_screen(screen: &Screen) -> Snake {
+        Snake::new((screen.max_x - screen.min_x) / 2, (screen.max_y - screen.min_y) / 2)
     }
 
     pub fn grow(&mut self) {
@@ -180,20 +192,55 @@ impl fmt::Display for Snake {
     }
 }
 
+pub struct Score {
+    score: u32,
+    coordinates: Coordinates,
+}
+
+impl Score {
+    pub fn new(position_x: u16, position_y: u16) -> Score {
+        Score { score: 0 , coordinates: Coordinates::new(position_x, position_y) }
+    }
+
+    pub fn new_in_screen(screen: &Screen) -> Score {
+        Score::new(screen.limit_x / 2, screen.min_y - 1)
+    }
+
+    pub fn inc(&mut self) {
+        self.score += SCORE_PER_MICE;
+    }
+}
+
+impl fmt::Display for Score {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let score = format!("Score: {}", self.score);
+        write!(
+            f,
+            "{}{}",
+            termion::cursor::Goto(self.coordinates.x - score.len() as u16 / 2, self.coordinates.y),
+            score
+        )
+    }
+}
+
 pub struct Screen {
     min_x: u16,
     max_x: u16,
     min_y: u16,
     max_y: u16,
+    limit_x: u16,
+    limit_y: u16,
 }
 
 impl Screen {
     pub fn new(size_x: u16, size_y: u16) -> Screen {
         Screen {
-            min_x: 1,
-            min_y: 1,
-            max_x: size_x,
-            max_y: size_y,
+            min_x: 2,
+            min_y: 2,
+            max_x: size_x - 1,
+            max_y: size_y - 1,
+            limit_x: size_x,
+            limit_y: size_y,
         }
     }
 
@@ -210,28 +257,58 @@ impl Screen {
     }
 }
 
+impl fmt::Display for Screen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let dash_line = "—".repeat((self.max_x - self.min_x + 1) as usize);
+        write!(f, "{}{}", termion::cursor::Goto(self.min_x, self.min_y - 1), dash_line)?;
+        write!(f, "{}{}", termion::cursor::Goto(self.min_x, self.max_y + 1), dash_line)?;
+        for i in self.min_y..(self.max_y + 1) {
+            write!(
+                f,
+                "{}{}{}{}",
+                termion::cursor::Goto(self.min_x - 1, i),
+                '|',
+                termion::cursor::Goto(self.max_x + 1, i),
+                '|'
+            )?;
+        }
+        Ok(())
+    }
+}
+
 pub struct Game {
     screen: Screen,
     mice: Mice,
     snake: Snake,
+    score: Score,
 }
 
 impl Game {
     pub fn new(size_x: u16, size_y: u16) -> Game {
+        let screen = Screen::new(size_x, size_y);
+        let mice = Mice::new_in_screen(&screen);
+        let snake = Snake::new_in_screen(&screen);
+        let score = Score::new_in_screen(&screen);
         Game {
-            screen: Screen::new(size_x, size_y),
-            mice: Mice::new(size_x, size_y),
-            snake: Snake::new(size_x / 2, size_y / 2),
+            screen,
+            mice,
+            snake,
+            score,
         }
+    }
+
+    fn make_mice(&mut self) {
+        self.mice = Mice::new_in_screen(&self.screen);
     }
 
     pub fn calc_new_frame(&mut self) {
         self.snake.do_move();
         while self.snake.head.coordinates.is_same(&self.mice.block.coordinates) {
+            self.score.inc();
             self.snake.grow();
-            self.mice = Mice::new(self.screen.max_x, self.screen.max_y);
+            self.make_mice();
             while self.snake.does_intersect_tail(&self.mice.block.coordinates) {
-                self.mice = Mice::new(self.screen.max_x, self.screen.max_y);
+                self.make_mice()
             }
         }
     }
@@ -245,7 +322,7 @@ impl Game {
     }
 
     pub fn get_game_over_message(&self) -> String {
-        let message = "Game Over!";
+        let message = format!("Game Over! Your score is {}", self.score.score);
         format!(
             "{}{}",
             termion::cursor::Goto(
@@ -259,6 +336,13 @@ impl Game {
 
 impl fmt::Display for Game {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.mice, self.snake)
+        write!(
+            f,
+            "{}{}{}{}",
+            self.mice,
+            self.snake,
+            self.screen,
+            self.score
+        )
     }
 }
