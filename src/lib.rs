@@ -128,7 +128,11 @@ impl Snake {
     }
 
     pub fn is_stuck(&self) -> bool {
-        match self.tail.iter().position(|piece| piece.coordinates.is_same(&self.head.coordinates)) {
+        self.does_intersect_tail(&self.head.coordinates)
+    }
+
+    pub fn does_intersect_tail(&self, coordinates: &Coordinates) -> bool {
+        match self.tail.iter().position(|piece| piece.coordinates.is_same(coordinates)) {
             Some(_) => true,
             None => false,
         }
@@ -226,6 +230,9 @@ impl Game {
         while self.snake.head.coordinates.is_same(&self.mice.block.coordinates) {
             self.snake.grow();
             self.mice = Mice::new(self.screen.max_x, self.screen.max_y);
+            while self.snake.does_intersect_tail(&self.mice.block.coordinates) {
+                self.mice = Mice::new(self.screen.max_x, self.screen.max_y);
+            }
         }
     }
 
