@@ -3,7 +3,6 @@ extern crate rand;
 
 use rand::Rng;
 use std::fmt;
-use std::fmt::{Formatter, Error};
 
 pub trait CanMove {
     fn do_move(&mut self);
@@ -42,28 +41,28 @@ impl Coordinates {
     }
 }
 
-pub struct Circle {
+pub struct Block {
     coordinates: Coordinates,
     velocity: Velocity,
     symbol: char,
 }
 
-impl Circle {
-    pub fn new(x: u16, y: u16, symbol: char) -> Circle {
-        Circle {
+impl Block {
+    pub fn new(x: u16, y: u16, symbol: char) -> Block {
+        Block {
             coordinates: Coordinates::new(x, y),
             velocity: Velocity::new(0, 0),
             symbol,
         }
     }
 
-    pub fn new_random(max_x: u16, max_y: u16, symbol: char) -> Circle {
+    pub fn new_random(max_x: u16, max_y: u16, symbol: char) -> Block {
         let mut rng = rand::thread_rng();
-        Circle::new(rng.gen_range(1, max_x), rng.gen_range(1, max_y), symbol)
+        Block::new(rng.gen_range(1, max_x), rng.gen_range(1, max_y), symbol)
     }
 }
 
-impl CanMove for Circle {
+impl CanMove for Block {
     fn do_move(&mut self) {
         if self.velocity.vel_x.abs() > 0 {
             self.coordinates.x = self.coordinates.x.wrapping_add(self.velocity.vel_x as u16);
@@ -79,7 +78,7 @@ impl CanMove for Circle {
     }
 }
 
-impl fmt::Display for Circle {
+impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -91,30 +90,30 @@ impl fmt::Display for Circle {
 }
 
 pub struct Mice {
-    circle: Circle,
+    block: Block,
 }
 
 impl Mice {
     pub fn new(max_x: u16, max_y: u16) -> Mice {
-        Mice { circle: Circle::new_random(max_x, max_y, 'O') }
+        Mice { block: Block::new_random(max_x, max_y, 'O') }
     }
 }
 
 impl fmt::Display for Mice {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", self.circle)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.block)
     }
 }
 
 pub struct Snake {
-    head: Circle,
-    tail: Vec<Circle>,
+    head: Block,
+    tail: Vec<Block>,
 }
 
 impl Snake {
     pub fn new(x: u16, y: u16) -> Snake {
         Snake {
-            head: Circle::new(x, y, 'O'),
+            head: Block::new(x, y, 'O'),
             tail: vec![
                 Snake::new_tail_circle(x - 1, y),
                 Snake::new_tail_circle(x - 2, y),
@@ -135,8 +134,8 @@ impl Snake {
         }
     }
 
-    fn new_tail_circle(x: u16, y: u16) -> Circle {
-        Circle::new(x, y, 'o')
+    fn new_tail_circle(x: u16, y: u16) -> Block {
+        Block::new(x, y, 'o')
     }
 }
 
@@ -167,7 +166,7 @@ impl CanMove for Snake {
 }
 
 impl fmt::Display for Snake {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut result = format!("{}", self.head);
         for piece in self.tail.iter() {
             result.push_str(format!("{}", piece).as_ref());
@@ -207,15 +206,15 @@ impl Screen {
     }
 }
 
-pub struct Field {
+pub struct Game {
     screen: Screen,
     mice: Mice,
     snake: Snake,
 }
 
-impl Field {
-    pub fn new(size_x: u16, size_y: u16) -> Field {
-        Field {
+impl Game {
+    pub fn new(size_x: u16, size_y: u16) -> Game {
+        Game {
             screen: Screen::new(size_x, size_y),
             mice: Mice::new(size_x, size_y),
             snake: Snake::new(size_x / 2, size_y / 2),
@@ -224,7 +223,7 @@ impl Field {
 
     pub fn calc_new_frame(&mut self) {
         self.snake.do_move();
-        while self.snake.head.coordinates.is_same(&self.mice.circle.coordinates) {
+        while self.snake.head.coordinates.is_same(&self.mice.block.coordinates) {
             self.snake.grow();
             self.mice = Mice::new(self.screen.max_x, self.screen.max_y);
         }
@@ -251,7 +250,7 @@ impl Field {
     }
 }
 
-impl fmt::Display for Field {
+impl fmt::Display for Game {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.mice, self.snake)
     }
