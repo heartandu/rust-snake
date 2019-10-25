@@ -14,7 +14,7 @@ fn main() {
 
     write!(
         stdout,
-        "{}{}q to exit. Use arrow keys to control the O. Press space to start...{}",
+        "{}{}q to exit. Use arrow keys to control the Snake and space bar to pause the game. Press space to start...{}",
         clear::All,
         cursor::Goto(1, 1),
         cursor::Hide
@@ -45,11 +45,11 @@ fn main() {
                 Key::Right      => game.set_snake_velocity(Velocity::new(1, 0)),
                 Key::Up         => game.set_snake_velocity(Velocity::new(0, -1)),
                 Key::Down       => game.set_snake_velocity(Velocity::new(0, 1)),
+                Key::Char(' ')  => game.switch_pause(),
                 _ => {},
             }
         }
 
-        // Clears screen
         write!(stdout, "{}", clear::All).unwrap();
         game.calc_new_frame();
         write!(stdout, "{}", game).unwrap();

@@ -281,6 +281,7 @@ pub struct Game {
     mice: Mice,
     snake: Snake,
     score: Score,
+    is_paused: bool,
 }
 
 impl Game {
@@ -294,6 +295,7 @@ impl Game {
             mice,
             snake,
             score,
+            is_paused: false,
         }
     }
 
@@ -302,6 +304,10 @@ impl Game {
     }
 
     pub fn calc_new_frame(&mut self) {
+        if self.is_paused {
+            return;
+        }
+
         self.snake.do_move();
         while self.snake.head.coordinates.is_same(&self.mice.block.coordinates) {
             self.score.inc();
@@ -314,7 +320,15 @@ impl Game {
     }
 
     pub fn set_snake_velocity(&mut self, velocity: Velocity) {
+        if self.is_paused {
+            return;
+        }
+
         self.snake.set_velocity(velocity);
+    }
+
+    pub fn switch_pause(&mut self) {
+        self.is_paused = !self.is_paused;
     }
 
     pub fn is_game_over(&self) -> bool {
@@ -322,7 +336,14 @@ impl Game {
     }
 
     pub fn get_game_over_message(&self) -> String {
-        let message = format!("Game Over! Your score is {}", self.score.score);
+        self.format_message(format!("Game Over! Your score is {}", self.score.score))
+    }
+
+    pub fn get_pause_message(&self) -> String {
+        self.format_message("Paused".to_string())
+    }
+
+    fn format_message(&self, message: String) -> String {
         format!(
             "{}{}",
             termion::cursor::Goto(
@@ -343,6 +364,12 @@ impl fmt::Display for Game {
             self.snake,
             self.screen,
             self.score
-        )
+        )?;
+
+        if self.is_paused {
+            write!(f, "{}", self.get_pause_message())?;
+        }
+
+        Ok(())
     }
 }
