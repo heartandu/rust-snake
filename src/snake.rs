@@ -1,14 +1,8 @@
-/*
-TODO
-    1. Implement walls and collision with walls and snake itself - DONE
-    2. Mouse spawning and snake growing - DONE
-    3. Scoring system
-*/
-
 use std::ops::Mul;
 use bevy::{
     prelude::*,
     sprite::collide_aabb::collide,
+    text::Text2dBounds,
 };
 use rand::Rng;
 
@@ -16,13 +10,23 @@ const BLOCK_SIZE: Vec3 = Vec3::new(20.0, 20.0, 1.0);
 const SCREEN_HEIGHT: f32 = 22.0;
 const SCREEN_WIDTH: f32 = 40.0;
 
+const SCORE_DELTA: usize = 100;
+const SCOREBOARD_FONT_SIZE: f32 = 21.0;
+const SCOREBOARD_PADDING: Val = Val::Px(10.0);
+
+const MESSAGE_BOX_SIZE: Vec2 = Vec2::new(300.0, 165.0);
+const MESSAGE_BOX_FONT_SIZE: f32 = 40.0;
+
 const SNAKE_STARTING_LENGTH: i32 = 4;
 const SNAKE_STARTING_POSITION: Position = Position::new(0.0, 0.0);
 const SNAKE_STARTING_DIRECTION: Direction = Direction::Right;
 
-const WALL_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
+const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const MOUSE_COLOR: Color = Color::rgb(1.0, 0.65, 0.34);
 const SNAKE_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
+const SCOREBOARD_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
+const MESSAGE_BOX_BACKGROUND_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
+const MESSAGE_BOX_TEXT_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
 const BACKGROUND_COLOR: Color = Color::rgb(0.1, 0.1, 0.1);
 
 pub struct SnakeApp;
@@ -31,8 +35,10 @@ impl Plugin for SnakeApp {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(BACKGROUND_COLOR))
             .insert_resource(MoveTimer(Timer::from_seconds(0.15, TimerMode::Repeating)))
+            .insert_resource(Scoreboard { score: 0 })
             .add_systems(Startup, setup)
             .add_systems(Update, (
+                update_scoreboard,
                 move_snake,
                 check_collisions,
                 bevy::window::close_on_esc,
@@ -257,6 +263,17 @@ impl WallLocation {
     }
 }
 
+#[derive(Resource)]
+struct Scoreboard {
+    score: usize,
+}
+
+#[derive(Component)]
+struct ScoreboardComponent;
+
+#[derive(Component)]
+struct MessageBox;
+
 fn setup(mut commands: Commands) {
     // Camera
     commands.spawn(Camera2dBundle::default());
@@ -293,6 +310,33 @@ fn setup(mut commands: Commands) {
             SNAKE_STARTING_DIRECTION,
         ));
     }
+
+    // Scoreboard
+    commands.spawn((
+        TextBundle::from_sections([
+            TextSection::new(
+                "Score: ",
+                TextStyle {
+                    font_size: SCOREBOARD_FONT_SIZE,
+                    color: SCOREBOARD_COLOR,
+                    ..default()
+                },
+            ),
+            TextSection::from_style(
+                TextStyle {
+                    font_size: SCOREBOARD_FONT_SIZE,
+                    color: SCOREBOARD_COLOR,
+                    ..default()
+                },
+            ),
+        ]).with_style(Style {
+            position_type: PositionType::Absolute,
+            top: SCOREBOARD_PADDING,
+            left: SCOREBOARD_PADDING,
+            ..default()
+        }),
+        ScoreboardComponent,
+    ));
 }
 
 fn move_snake(
@@ -342,10 +386,16 @@ fn move_snake(
 
 fn check_collisions(
     mut commands: Commands,
+    mut scoreboard: ResMut<Scoreboard>,
     mut state_query: Query<&mut GameState>,
     snake_query: Query<(&Snake, &Transform, &Position, &Direction), With<Snake>>,
     collider_query: Query<(Entity, &Transform, Option<&Snake>, Option<&Mouse>), With<Collider>>,
 ) {
+    let mut state = state_query.single_mut();
+    if *state != GameState::Running {
+        return;
+    }
+
     let snake: Vec<(&Snake, &Transform, &Position, &Direction)> = snake_query.iter().collect();
 
     let (head, head_transform, _, _) = snake.first().unwrap();
@@ -368,6 +418,8 @@ fn check_collisions(
         if let Some(_) = collision {
             // If collided with mouse, spawn a new one
             if maybe_mouse.is_some() {
+                scoreboard.score += SCORE_DELTA;
+
                 commands.entity(entity).despawn();
 
                 let mut mouse_bundle = MouseBundle::new(BLOCK_SIZE);
@@ -401,8 +453,53 @@ fn check_collisions(
             }
 
             // If collided with wall or snake itself, stop the game
-            let mut state = state_query.single_mut();
             *state = GameState::Paused;
+
+            spawn_message_box(&mut commands, "GAME OVER".to_string());
         }
     }
+}
+
+fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text, With<ScoreboardComponent>>) {
+    let mut text = query.single_mut();
+    text.sections[1].value = scoreboard.score.to_string();
+}
+
+fn spawn_message_box(commands: &mut Commands, message: String) {
+    commands
+        .spawn((
+            SpriteBundle {
+                sprite: Sprite {
+                    color: MESSAGE_BOX_BACKGROUND_COLOR,
+                    custom_size: Some(MESSAGE_BOX_SIZE),
+                    ..default()
+                },
+                ..default()
+            },
+            MessageBox,
+        ))
+        .with_children(|builder| {
+            builder.spawn((
+                Text2dBundle {
+                    text: Text {
+                        sections: vec![TextSection::new(
+                            message,
+                            TextStyle {
+                                font_size: MESSAGE_BOX_FONT_SIZE,
+                                color: MESSAGE_BOX_TEXT_COLOR,
+                                ..default()
+                            },
+                        )],
+                        alignment: TextAlignment::Center,
+                        ..default()
+                    },
+                    text_2d_bounds: Text2dBounds {
+                        size: MESSAGE_BOX_SIZE,
+                    },
+                    transform: Transform::from_translation(Vec3::Z),
+                    ..default()
+                },
+                MessageBox,
+            ));
+        });
 }
