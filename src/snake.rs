@@ -1,7 +1,7 @@
 /*
 TODO
     1. Implement walls and collision with walls and snake itself - DONE
-    2. Mouse spawning and snake growing
+    2. Mouse spawning and snake growing - DONE
     3. Scoring system
 */
 
@@ -10,6 +10,7 @@ use bevy::{
     prelude::*,
     sprite::collide_aabb::collide,
 };
+use rand::Rng;
 
 const BLOCK_SIZE: Vec3 = Vec3::new(20.0, 20.0, 1.0);
 const SCREEN_HEIGHT: f32 = 22.0;
@@ -20,6 +21,7 @@ const SNAKE_STARTING_POSITION: Position = Position::new(0.0, 0.0);
 const SNAKE_STARTING_DIRECTION: Direction = Direction::Right;
 
 const WALL_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
+const MOUSE_COLOR: Color = Color::rgb(1.0, 0.65, 0.34);
 const SNAKE_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
 const BACKGROUND_COLOR: Color = Color::rgb(0.1, 0.1, 0.1);
 
@@ -50,18 +52,65 @@ struct MoveTimer(Timer);
 #[derive(Component)]
 struct Snake(u32);
 
+#[derive(Bundle)]
+struct SnakeBundle {
+    block_bundle: BlockBundle,
+    snake: Snake,
+    direction: Direction,
+    collider: Collider,
+}
+
+impl SnakeBundle {
+    fn new(id: u32, block_bundle: BlockBundle, direction: Direction) -> SnakeBundle {
+        SnakeBundle {
+            block_bundle,
+            snake: Snake(id),
+            direction,
+            collider: Collider,
+        }
+    }
+}
+
 #[derive(Component)]
 struct Mouse;
+
+#[derive(Bundle)]
+struct MouseBundle {
+    block_bundle: BlockBundle,
+    mouse: Mouse,
+    collider: Collider,
+}
+
+impl MouseBundle {
+    fn new(block_size: Vec3) -> MouseBundle {
+        let x_pos = SCREEN_WIDTH / 2.0 - 1.0;
+        let y_pos = SCREEN_HEIGHT / 2.0 - 1.0;
+
+        let mut rng = rand::thread_rng();
+
+        MouseBundle {
+            block_bundle: BlockBundle::new(
+                MOUSE_COLOR,
+                Position(Vec2::new(
+                    rng.gen_range(-x_pos..=x_pos).round(),
+                    rng.gen_range(-y_pos..=y_pos).round(),
+                )),
+                block_size,
+            ),
+            mouse: Mouse,
+            collider: Collider,
+        }
+    }
+}
 
 #[derive(Bundle)]
 struct BlockBundle {
     sprite_bundle: SpriteBundle,
     position: Position,
-    direction: Direction,
 }
 
 impl BlockBundle {
-    fn new(color: Color, position: Position, block_size: Vec3, direction: Direction) -> BlockBundle {
+    fn new(color: Color, position: Position, block_size: Vec3) -> BlockBundle {
         BlockBundle {
             sprite_bundle: SpriteBundle {
                 transform: Transform {
@@ -80,7 +129,6 @@ impl BlockBundle {
                 ..default()
             },
             position,
-            direction,
         }
     }
 }
@@ -110,7 +158,7 @@ impl Position {
     }
 }
 
-#[derive(Component, Clone, PartialEq, Debug)]
+#[derive(Component, Copy, Clone, PartialEq, Debug)]
 enum Direction {
     Left,
     Right,
@@ -127,6 +175,15 @@ impl Direction {
             Direction::Up => Velocity(Vec2::new(0.0, 1.0)),
         }
     }
+
+    fn reverse(&self) -> Direction {
+        match self {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            Direction::Down => Direction::Up,
+            Direction::Up => Direction::Down,
+        }
+    }
 }
 
 #[derive(Component, Deref, DerefMut)]
@@ -135,7 +192,6 @@ struct Velocity(Vec2);
 #[derive(Bundle)]
 struct WallBundle {
     sprite_bundle: SpriteBundle,
-    position: Position,
     collider: Collider,
 }
 
@@ -154,7 +210,6 @@ impl WallBundle {
                 },
                 ..default()
             },
-            position: location.position(),
             collider: Collider,
         }
     }
@@ -189,15 +244,6 @@ impl WallLocation {
         Vec3::new(dx, dy, 1.0).mul(block_size)
     }
 
-    fn position(&self) -> Position {
-        let (start, _) = self.points();
-
-        match self {
-            WallLocation::Left | WallLocation::Right => Position(Vec2::new(start.x, 0.0)),
-            WallLocation::Top | WallLocation::Bottom => Position(Vec2::new(0.0, start.y)),
-        }
-    }
-
     fn points(&self) -> (Vec2, Vec2) {
         let x_pos = SCREEN_WIDTH / 2.0;
         let y_pos = SCREEN_HEIGHT / 2.0;
@@ -224,15 +270,18 @@ fn setup(mut commands: Commands) {
     commands.spawn(WallBundle::new(WallLocation::Right, BLOCK_SIZE));
     commands.spawn(WallBundle::new(WallLocation::Bottom, BLOCK_SIZE));
 
+    // Mouse
+    commands.spawn(MouseBundle::new(BLOCK_SIZE));
+
     // Snake
     let delta = 1.0 / SNAKE_STARTING_LENGTH as f32;
+    let blocks_offset = SNAKE_STARTING_DIRECTION.reverse().velocity();
+    let mut color = SNAKE_COLOR;
     for i in 0..SNAKE_STARTING_LENGTH {
-        let blocks_offset = Direction::Left.velocity();
-        let mut color = SNAKE_COLOR;
-
         color.set_r(delta * i as f32);
 
-        commands.spawn((
+        commands.spawn(SnakeBundle::new(
+            i as u32,
             BlockBundle::new(
                 color,
                 Position::new(
@@ -240,10 +289,8 @@ fn setup(mut commands: Commands) {
                     SNAKE_STARTING_POSITION.y + i as f32 * blocks_offset.y,
                 ),
                 BLOCK_SIZE,
-                SNAKE_STARTING_DIRECTION,
             ),
-            Snake(i as u32),
-            Collider,
+            SNAKE_STARTING_DIRECTION,
         ));
     }
 }
@@ -260,6 +307,7 @@ fn move_snake(
     }
 
     {
+        // Handle keyboard controls
         let (_, _, mut head_dir) = query.iter_mut().next().unwrap();
 
         let directions: Vec<Direction> = keys.get_pressed().filter_map(|k| match k {
@@ -275,6 +323,7 @@ fn move_snake(
         }
     }
 
+    // Move the snake
     if timer.tick(time.delta()).just_finished() {
         let mut prev_dir = None;
         for (mut transform, mut pos, mut dir) in query.iter_mut() {
@@ -292,16 +341,17 @@ fn move_snake(
 }
 
 fn check_collisions(
-    mut _commands: Commands,
+    mut commands: Commands,
     mut state_query: Query<&mut GameState>,
-    snake_query: Query<(&Snake, &Transform, &Direction), With<Snake>>,
-    collider_query: Query<(Entity, &Transform, Option<&Snake>), With<Collider>>,
+    snake_query: Query<(&Snake, &Transform, &Position, &Direction), With<Snake>>,
+    collider_query: Query<(Entity, &Transform, Option<&Snake>, Option<&Mouse>), With<Collider>>,
 ) {
-    let snake: Vec<(&Snake, &Transform, &Direction)> = snake_query.iter().collect();
+    let snake: Vec<(&Snake, &Transform, &Position, &Direction)> = snake_query.iter().collect();
 
-    let (head, head_transform, _) = snake.first().unwrap();
+    let (head, head_transform, _, _) = snake.first().unwrap();
 
-    for (_, transform, maybe_snake) in collider_query.iter() {
+    for (entity, transform, maybe_snake, maybe_mouse) in collider_query.iter() {
+        // Do not collide snake head with itself
         if let Some(snake) = maybe_snake {
             if snake.0 == head.0 {
                 continue;
@@ -316,6 +366,41 @@ fn check_collisions(
         );
 
         if let Some(_) = collision {
+            // If collided with mouse, spawn a new one
+            if maybe_mouse.is_some() {
+                commands.entity(entity).despawn();
+
+                let mut mouse_bundle = MouseBundle::new(BLOCK_SIZE);
+                // Check if we are trying to spawn a mouse inside the snake
+                while snake.iter().find(|(_, _, position, _)| {
+                    position.x == mouse_bundle.block_bundle.position.x
+                        && position.y == mouse_bundle.block_bundle.position.y
+                }).is_some() {
+                    mouse_bundle = MouseBundle::new(BLOCK_SIZE);
+                }
+
+                commands.spawn(mouse_bundle);
+
+                // Spawn a new snake block behind the current tail block
+                let (tail, _, tail_position, &tail_direction) = snake.last().unwrap();
+                let pos_offset = tail_direction.reverse().velocity();
+                commands.spawn(SnakeBundle::new(
+                    tail.0 + 1,
+                    BlockBundle::new(
+                        SNAKE_COLOR,
+                        Position::new(
+                            tail_position.x + pos_offset.x,
+                            tail_position.y + pos_offset.y,
+                        ),
+                        BLOCK_SIZE,
+                    ),
+                    tail_direction,
+                ));
+
+                return;
+            }
+
+            // If collided with wall or snake itself, stop the game
             let mut state = state_query.single_mut();
             *state = GameState::Paused;
         }
