@@ -1,4 +1,5 @@
 use std::ops::Mul;
+use std::time::Duration;
 use bevy::{
     prelude::*,
     sprite::collide_aabb::collide,
@@ -21,6 +22,11 @@ const SNAKE_STARTING_LENGTH: i32 = 4;
 const SNAKE_STARTING_POSITION: Position = Position::new(0.0, 0.0);
 const SNAKE_STARTING_DIRECTION: Direction = Direction::Right;
 
+const TIMER_STARTING_DURATION: f32 = 0.16;
+const TIMER_DURATION_DELTA: f32 = 0.02;
+const SCORE_DIFFICULTY_THRESHOLD: f32 = 500.0;
+const MAX_DIFFICULTY: usize = 6;
+
 const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const MOUSE_COLOR: Color = Color::rgb(1.0, 0.65, 0.34);
 const SNAKE_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
@@ -35,10 +41,11 @@ impl Plugin for SnakeApp {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(BACKGROUND_COLOR))
             .insert_resource(MoveTimer(Timer::from_seconds(0.15, TimerMode::Repeating)))
-            .insert_resource(Scoreboard { score: 0 })
+            .insert_resource(Scoreboard { score: 0, difficulty: 0 })
             .add_systems(Startup, setup)
             .add_systems(Update, (
                 update_scoreboard,
+                update_difficulty,
                 move_snake,
                 check_collisions,
                 bevy::window::close_on_esc,
@@ -266,6 +273,7 @@ impl WallLocation {
 #[derive(Resource)]
 struct Scoreboard {
     score: usize,
+    difficulty: usize,
 }
 
 #[derive(Component)]
@@ -465,6 +473,18 @@ fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text, Wi
     text.sections[1].value = scoreboard.score.to_string();
 }
 
+fn update_difficulty(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveTimer>) {
+    let difficulty = (scoreboard.score as f32 / SCORE_DIFFICULTY_THRESHOLD).floor() as usize;
+
+    if difficulty != scoreboard.difficulty && difficulty <= MAX_DIFFICULTY {
+        scoreboard.difficulty = difficulty;
+
+        let new_duration = TIMER_STARTING_DURATION - TIMER_DURATION_DELTA * difficulty as f32;
+
+        timer.set_duration(Duration::from_secs_f32(new_duration));
+    }
+}
+
 fn spawn_message_box(commands: &mut Commands, message: String) {
     commands
         .spawn((
@@ -474,6 +494,7 @@ fn spawn_message_box(commands: &mut Commands, message: String) {
                     custom_size: Some(MESSAGE_BOX_SIZE),
                     ..default()
                 },
+                transform: Transform::from_translation(Vec3::Z),
                 ..default()
             },
             MessageBox,
@@ -496,7 +517,7 @@ fn spawn_message_box(commands: &mut Commands, message: String) {
                     text_2d_bounds: Text2dBounds {
                         size: MESSAGE_BOX_SIZE,
                     },
-                    transform: Transform::from_translation(Vec3::Z),
+                    transform: Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)),
                     ..default()
                 },
                 MessageBox,
