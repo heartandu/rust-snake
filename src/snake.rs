@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ops::Mul;
 use std::time::Duration;
 use bevy::{
@@ -45,8 +45,9 @@ impl Plugin for SnakeApp {
             .insert_resource(MoveTimer(Timer::from_seconds(TIMER_STARTING_DURATION, TimerMode::Repeating)))
             .insert_resource(Scoreboard { score: 0, difficulty: 0 })
             .add_state::<GameState>()
-            .add_systems(Startup, (setup_camera, setup))
-            .add_systems(Update, handle_state_input)
+            .add_event::<SoundEvent>()
+            .add_systems(Startup, (setup_once, setup))
+            .add_systems(Update, (handle_state_input, play_sounds))
             .add_systems(Update, (
                 update_scoreboard,
                 update_difficulty,
@@ -57,7 +58,7 @@ impl Plugin for SnakeApp {
             .add_systems(OnExit(GameState::Startup), despawn::<StartupMessage>)
             .add_systems(OnEnter(GameState::Paused), spawn_message::<PausedMessage>)
             .add_systems(OnExit(GameState::Paused), despawn::<PausedMessage>)
-            .add_systems(OnEnter(GameState::GameOver), spawn_message::<GameOverMessage>)
+            .add_systems(OnEnter(GameState::GameOver), (spawn_message::<GameOverMessage>, game_over))
             .add_systems(OnExit(GameState::GameOver), (
                 despawn::<GameOverMessage>,
                 despawn::<GameComponents>,
@@ -306,8 +307,62 @@ struct Scoreboard {
 #[derive(Component)]
 struct ScoreboardComponent;
 
-fn setup_camera(mut commands: Commands) {
+#[derive(Resource)]
+struct Sounds {
+    sounds: HashMap<SoundType, Handle<AudioSource>>
+}
+
+impl Sounds {
+    fn new() -> Sounds {
+        Sounds { sounds: HashMap::new() }
+    }
+
+    fn add_sound(&mut self, sound_type: SoundType, source: Handle<AudioSource>) {
+        self.sounds.insert(sound_type, source);
+    }
+
+    fn get_sound(&self, sound_type: &SoundType) -> Option<Handle<AudioSource>> {
+        match self.sounds.get(sound_type) {
+            None => None,
+            Some(sound) => Some(sound.clone()),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum SoundType {
+    Silence,
+    Grow,
+    DifficultyUp,
+    Failure,
+}
+
+#[derive(Event)]
+struct SoundEvent(SoundType);
+
+impl Default for SoundEvent {
+    fn default() -> Self {
+        SoundEvent(SoundType::Silence)
+    }
+}
+
+fn setup_once(mut commands: Commands, asset_server: Res<AssetServer>) {
+    // Camera
     commands.spawn(Camera2dBundle::default());
+
+    // Sounds
+    let mut sounds = Sounds::new();
+
+    let grow_sound = asset_server.load("sounds/grow.mp3");
+    sounds.add_sound(SoundType::Grow, grow_sound);
+
+    let difficulty_up_sound = asset_server.load("sounds/difficulty_up.mp3");
+    sounds.add_sound(SoundType::DifficultyUp, difficulty_up_sound);
+
+    let failure_sound = asset_server.load("sounds/failure.mp3");
+    sounds.add_sound(SoundType::Failure, failure_sound);
+
+    commands.insert_resource(sounds);
 }
 
 fn setup(mut commands: Commands) {
@@ -463,6 +518,7 @@ fn check_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
     mut state: ResMut<NextState<GameState>>,
+    mut sound_events: EventWriter<SoundEvent>,
     snake_query: Query<(&Snake, &Transform, &Position, &Direction), With<Snake>>,
     collider_query: Query<(Entity, &Transform, Option<&Snake>, Option<&Mouse>), With<Collider>>,
 ) {
@@ -519,6 +575,8 @@ fn check_collisions(
                     tail_direction,
                 ));
 
+                sound_events.send(SoundEvent(SoundType::Grow));
+
                 return;
             }
 
@@ -534,7 +592,11 @@ fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text, Wi
     text.sections[3].value = scoreboard.difficulty.to_string();
 }
 
-fn update_difficulty(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveTimer>) {
+fn update_difficulty(
+    mut scoreboard: ResMut<Scoreboard>,
+    mut timer: ResMut<MoveTimer>,
+    mut sound_events: EventWriter<SoundEvent>,
+) {
     let difficulty = (scoreboard.score as f32 / SCORE_DIFFICULTY_THRESHOLD).floor() as usize;
 
     if difficulty != scoreboard.difficulty {
@@ -543,7 +605,30 @@ fn update_difficulty(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveT
         let new_duration = timer.duration().as_secs_f32() * (1.0 - TIMER_SCALING_PERCENTAGE / 100.0);
 
         timer.set_duration(Duration::from_secs_f32(new_duration));
+
+        sound_events.send(SoundEvent(SoundType::DifficultyUp));
     }
+}
+
+fn play_sounds(
+    mut commands: Commands,
+    mut sound_events: EventReader<SoundEvent>,
+    sounds: Res<Sounds>,
+) {
+    if !sound_events.is_empty() {
+        for sound_event in sound_events.read() {
+            if let Some(sound) = sounds.get_sound(&sound_event.0) {
+                commands.spawn(AudioBundle {
+                    source: sound,
+                    settings: PlaybackSettings::DESPAWN,
+                });
+            }
+        }
+    }
+}
+
+fn game_over(mut sound_events: EventWriter<SoundEvent>) {
+    sound_events.send(SoundEvent(SoundType::Failure))
 }
 
 fn despawn<T: Component>(mut commands: Commands, query: Query<Entity, With<T>>) {
