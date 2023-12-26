@@ -24,9 +24,8 @@ const SNAKE_STARTING_POSITION: Position = Position::new(0.0, 0.0);
 const SNAKE_STARTING_DIRECTION: Direction = Direction::Right;
 
 const TIMER_STARTING_DURATION: f32 = 0.16;
-const TIMER_DURATION_DELTA: f32 = 0.02;
+const TIMER_SCALING_PERCENTAGE: f32 = 15.0;
 const SCORE_DIFFICULTY_THRESHOLD: f32 = 500.0;
-const MAX_DIFFICULTY: usize = 6;
 
 const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const MOUSE_COLOR: Color = Color::rgb(1.0, 0.65, 0.34);
@@ -47,7 +46,7 @@ impl Plugin for SnakeApp {
             .insert_resource(Scoreboard { score: 0, difficulty: 0 })
             .add_state::<GameState>()
             .add_systems(Startup, (setup_camera, setup))
-            .add_systems(Update, handle_input)
+            .add_systems(Update, handle_state_input)
             .add_systems(Update, (
                 update_scoreboard,
                 update_difficulty,
@@ -356,7 +355,24 @@ fn setup(mut commands: Commands) {
                     ..default()
                 },
             ),
-            TextSection::from_style(
+            TextSection::new(
+                "0",
+                TextStyle {
+                    font_size: SCOREBOARD_FONT_SIZE,
+                    color: SCOREBOARD_COLOR,
+                    ..default()
+                },
+            ),
+            TextSection::new(
+                "\nDifficulty: ",
+                TextStyle {
+                    font_size: SCOREBOARD_FONT_SIZE,
+                    color: SCOREBOARD_COLOR,
+                    ..default()
+                },
+            ),
+            TextSection::new(
+                "0",
                 TextStyle {
                     font_size: SCOREBOARD_FONT_SIZE,
                     color: SCOREBOARD_COLOR,
@@ -374,7 +390,7 @@ fn setup(mut commands: Commands) {
     ));
 }
 
-fn handle_input(
+fn handle_state_input(
     keys: Res<Input<KeyCode>>,
     state: Res<State<GameState>>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -518,15 +534,16 @@ fn check_collisions(
 fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text, With<ScoreboardComponent>>) {
     let mut text = query.single_mut();
     text.sections[1].value = scoreboard.score.to_string();
+    text.sections[3].value = scoreboard.difficulty.to_string();
 }
 
 fn update_difficulty(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveTimer>) {
     let difficulty = (scoreboard.score as f32 / SCORE_DIFFICULTY_THRESHOLD).floor() as usize;
 
-    if difficulty != scoreboard.difficulty && difficulty <= MAX_DIFFICULTY {
+    if difficulty != scoreboard.difficulty {
         scoreboard.difficulty = difficulty;
 
-        let new_duration = TIMER_STARTING_DURATION - TIMER_DURATION_DELTA * difficulty as f32;
+        let new_duration = timer.duration().as_secs_f32() * (1.0 - TIMER_SCALING_PERCENTAGE / 100.0);
 
         timer.set_duration(Duration::from_secs_f32(new_duration));
     }
