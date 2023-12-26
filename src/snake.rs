@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::ops::Mul;
 use std::time::Duration;
 use bevy::{
@@ -35,6 +36,8 @@ const MESSAGE_BOX_BACKGROUND_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
 const MESSAGE_BOX_TEXT_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
 const BACKGROUND_COLOR: Color = Color::rgb(0.1, 0.1, 0.1);
 
+const MAX_INPUT_QUEUE_LENGTH: usize = 2;
+
 pub struct SnakeApp;
 
 impl Plugin for SnakeApp {
@@ -42,21 +45,27 @@ impl Plugin for SnakeApp {
         app.insert_resource(ClearColor(BACKGROUND_COLOR))
             .insert_resource(MoveTimer(Timer::from_seconds(0.15, TimerMode::Repeating)))
             .insert_resource(Scoreboard { score: 0, difficulty: 0 })
+            .add_state::<GameState>()
             .add_systems(Startup, setup)
             .add_systems(Update, (
-                update_scoreboard,
-                update_difficulty,
-                move_snake,
-                check_collisions,
-                bevy::window::close_on_esc,
-            ));
+                handle_input,
+                update_scoreboard.run_if(in_state(GameState::Running)),
+                update_difficulty.run_if(in_state(GameState::Running)),
+                move_snake.run_if(in_state(GameState::Running)),
+                check_collisions.run_if(in_state(GameState::Running)),
+            ))
+            .add_systems(OnEnter(GameState::Paused), show_paused_message_box)
+            .add_systems(OnExit(GameState::Paused), clear_message_box)
+            .add_systems(OnEnter(GameState::GameOver), show_game_over_message);
     }
 }
 
-#[derive(Component, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States)]
 enum GameState {
+    #[default]
     Running,
     Paused,
+    GameOver,
 }
 
 #[derive(Resource, Deref, DerefMut)]
@@ -286,9 +295,6 @@ fn setup(mut commands: Commands) {
     // Camera
     commands.spawn(Camera2dBundle::default());
 
-    // Game state
-    commands.spawn(GameState::Running);
-
     // Walls
     commands.spawn(WallBundle::new(WallLocation::Left, BLOCK_SIZE));
     commands.spawn(WallBundle::new(WallLocation::Top, BLOCK_SIZE));
@@ -347,36 +353,61 @@ fn setup(mut commands: Commands) {
     ));
 }
 
+fn handle_input(
+    keys: Res<Input<KeyCode>>,
+    state: Res<State<GameState>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    match state.get() {
+        GameState::Running if keys.just_pressed(KeyCode::Space) => next_state.set(GameState::Paused),
+        GameState::Paused if keys.just_pressed(KeyCode::Space) => next_state.set(GameState::Running),
+        _ => {}
+    };
+}
+
 fn move_snake(
     keys: Res<Input<KeyCode>>,
     mut query: Query<(&mut Transform, &mut Position, &mut Direction), With<Snake>>,
-    state_query: Query<&GameState>,
     time: Res<Time>,
     mut timer: ResMut<MoveTimer>,
+    mut direction_queue: Local<VecDeque<Direction>>,
 ) {
-    if *state_query.single() != GameState::Running {
-        return;
-    }
+    timer.tick(time.delta());
 
     {
         // Handle keyboard controls
         let (_, _, mut head_dir) = query.iter_mut().next().unwrap();
 
-        let directions: Vec<Direction> = keys.get_pressed().filter_map(|k| match k {
-            KeyCode::Left | KeyCode::A if *head_dir != Direction::Right => Some(Direction::Left),
-            KeyCode::Right | KeyCode::D if *head_dir != Direction::Left => Some(Direction::Right),
-            KeyCode::Up | KeyCode::W if *head_dir != Direction::Down => Some(Direction::Up),
-            KeyCode::Down | KeyCode::S if *head_dir != Direction::Up => Some(Direction::Down),
+        let directions: Vec<Direction> = keys.get_just_pressed().filter_map(|k| match k {
+            KeyCode::Left | KeyCode::A => Some(Direction::Left),
+            KeyCode::Right | KeyCode::D => Some(Direction::Right),
+            KeyCode::Up | KeyCode::W => Some(Direction::Up),
+            KeyCode::Down | KeyCode::S => Some(Direction::Down),
             _ => None,
         }).collect();
 
-        if let Some(d) = directions.first() {
-            *head_dir = d.clone();
+        for direction in &directions {
+            if direction_queue.len() == MAX_INPUT_QUEUE_LENGTH {
+                break;
+            }
+
+            direction_queue.push_back(*direction);
+        }
+
+        if timer.just_finished() {
+            while !direction_queue.is_empty() {
+                let d = direction_queue.pop_front().unwrap();
+
+                if d.reverse() != *head_dir {
+                    *head_dir = d;
+                    break;
+                }
+            }
         }
     }
 
     // Move the snake
-    if timer.tick(time.delta()).just_finished() {
+    if timer.just_finished() {
         let mut prev_dir = None;
         for (mut transform, mut pos, mut dir) in query.iter_mut() {
             pos.apply_vel(&dir.velocity());
@@ -395,15 +426,10 @@ fn move_snake(
 fn check_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
-    mut state_query: Query<&mut GameState>,
+    mut state: ResMut<NextState<GameState>>,
     snake_query: Query<(&Snake, &Transform, &Position, &Direction), With<Snake>>,
     collider_query: Query<(Entity, &Transform, Option<&Snake>, Option<&Mouse>), With<Collider>>,
 ) {
-    let mut state = state_query.single_mut();
-    if *state != GameState::Running {
-        return;
-    }
-
     let snake: Vec<(&Snake, &Transform, &Position, &Direction)> = snake_query.iter().collect();
 
     let (head, head_transform, _, _) = snake.first().unwrap();
@@ -461,9 +487,7 @@ fn check_collisions(
             }
 
             // If collided with wall or snake itself, stop the game
-            *state = GameState::Paused;
-
-            spawn_message_box(&mut commands, "GAME OVER".to_string());
+            state.set(GameState::GameOver);
         }
     }
 }
@@ -482,6 +506,20 @@ fn update_difficulty(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveT
         let new_duration = TIMER_STARTING_DURATION - TIMER_DURATION_DELTA * difficulty as f32;
 
         timer.set_duration(Duration::from_secs_f32(new_duration));
+    }
+}
+
+fn show_game_over_message(mut commands: Commands) {
+    spawn_message_box(&mut commands, String::from("GAME OVER"));
+}
+
+fn show_paused_message_box(mut commands: Commands) {
+    spawn_message_box(&mut commands, String::from("PAUSED"));
+}
+
+fn clear_message_box(mut commands: Commands, query: Query<Entity, With<MessageBox>>) {
+    for entity in &query {
+        commands.entity(entity).despawn();
     }
 }
 
