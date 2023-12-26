@@ -16,8 +16,8 @@ const SCORE_DELTA: usize = 100;
 const SCOREBOARD_FONT_SIZE: f32 = 21.0;
 const SCOREBOARD_PADDING: Val = Val::Px(10.0);
 
-const MESSAGE_BOX_SIZE: Vec2 = Vec2::new(300.0, 165.0);
-const MESSAGE_BOX_FONT_SIZE: f32 = 40.0;
+const MESSAGE_BOX_SIZE: Vec2 = Vec2::new(450.0, 200.0);
+const MESSAGE_BOX_FONT_SIZE: f32 = 30.0;
 
 const SNAKE_STARTING_LENGTH: i32 = 4;
 const SNAKE_STARTING_POSITION: Position = Position::new(0.0, 0.0);
@@ -43,30 +43,43 @@ pub struct SnakeApp;
 impl Plugin for SnakeApp {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(BACKGROUND_COLOR))
-            .insert_resource(MoveTimer(Timer::from_seconds(0.15, TimerMode::Repeating)))
+            .insert_resource(MoveTimer(Timer::from_seconds(TIMER_STARTING_DURATION, TimerMode::Repeating)))
             .insert_resource(Scoreboard { score: 0, difficulty: 0 })
             .add_state::<GameState>()
-            .add_systems(Startup, setup)
+            .add_systems(Startup, (setup_camera, setup))
+            .add_systems(Update, handle_input)
             .add_systems(Update, (
-                handle_input,
-                update_scoreboard.run_if(in_state(GameState::Running)),
-                update_difficulty.run_if(in_state(GameState::Running)),
-                move_snake.run_if(in_state(GameState::Running)),
-                check_collisions.run_if(in_state(GameState::Running)),
+                update_scoreboard,
+                update_difficulty,
+                move_snake,
+                check_collisions,
+            ).run_if(in_state(GameState::Running)))
+            .add_systems(OnEnter(GameState::Startup), spawn_message::<StartupMessage>)
+            .add_systems(OnExit(GameState::Startup), despawn::<StartupMessage>)
+            .add_systems(OnEnter(GameState::Paused), spawn_message::<PausedMessage>)
+            .add_systems(OnExit(GameState::Paused), despawn::<PausedMessage>)
+            .add_systems(OnEnter(GameState::GameOver), spawn_message::<GameOverMessage>)
+            .add_systems(OnExit(GameState::GameOver), (
+                despawn::<GameOverMessage>,
+                despawn::<GameComponent>,
+                reset,
+                setup,
             ))
-            .add_systems(OnEnter(GameState::Paused), show_paused_message_box)
-            .add_systems(OnExit(GameState::Paused), clear_message_box)
-            .add_systems(OnEnter(GameState::GameOver), show_game_over_message);
+        ;
     }
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States)]
 enum GameState {
     #[default]
+    Startup,
     Running,
     Paused,
     GameOver,
 }
+
+#[derive(Component)]
+struct GameComponent;
 
 #[derive(Resource, Deref, DerefMut)]
 struct MoveTimer(Timer);
@@ -80,6 +93,7 @@ struct SnakeBundle {
     snake: Snake,
     direction: Direction,
     collider: Collider,
+    game_component: GameComponent,
 }
 
 impl SnakeBundle {
@@ -89,6 +103,7 @@ impl SnakeBundle {
             snake: Snake(id),
             direction,
             collider: Collider,
+            game_component: GameComponent,
         }
     }
 }
@@ -101,6 +116,7 @@ struct MouseBundle {
     block_bundle: BlockBundle,
     mouse: Mouse,
     collider: Collider,
+    game_component: GameComponent,
 }
 
 impl MouseBundle {
@@ -121,6 +137,7 @@ impl MouseBundle {
             ),
             mouse: Mouse,
             collider: Collider,
+            game_component: GameComponent,
         }
     }
 }
@@ -215,6 +232,7 @@ struct Velocity(Vec2);
 struct WallBundle {
     sprite_bundle: SpriteBundle,
     collider: Collider,
+    game_component: GameComponent,
 }
 
 impl WallBundle {
@@ -233,6 +251,7 @@ impl WallBundle {
                 ..default()
             },
             collider: Collider,
+            game_component: GameComponent,
         }
     }
 }
@@ -291,10 +310,11 @@ struct ScoreboardComponent;
 #[derive(Component)]
 struct MessageBox;
 
-fn setup(mut commands: Commands) {
-    // Camera
+fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
+}
 
+fn setup(mut commands: Commands) {
     // Walls
     commands.spawn(WallBundle::new(WallLocation::Left, BLOCK_SIZE));
     commands.spawn(WallBundle::new(WallLocation::Top, BLOCK_SIZE));
@@ -350,6 +370,7 @@ fn setup(mut commands: Commands) {
             ..default()
         }),
         ScoreboardComponent,
+        GameComponent,
     ));
 }
 
@@ -359,8 +380,10 @@ fn handle_input(
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     match state.get() {
+        GameState::Startup if keys.just_pressed(KeyCode::Space) => next_state.set(GameState::Running),
         GameState::Running if keys.just_pressed(KeyCode::Space) => next_state.set(GameState::Paused),
         GameState::Paused if keys.just_pressed(KeyCode::Space) => next_state.set(GameState::Running),
+        GameState::GameOver if keys.just_pressed(KeyCode::R) => next_state.set(GameState::Running),
         _ => {}
     };
 }
@@ -509,21 +532,53 @@ fn update_difficulty(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveT
     }
 }
 
-fn show_game_over_message(mut commands: Commands) {
-    spawn_message_box(&mut commands, String::from("GAME OVER"));
-}
-
-fn show_paused_message_box(mut commands: Commands) {
-    spawn_message_box(&mut commands, String::from("PAUSED"));
-}
-
-fn clear_message_box(mut commands: Commands, query: Query<Entity, With<MessageBox>>) {
+fn despawn<T: Component>(mut commands: Commands, query: Query<Entity, With<T>>) {
     for entity in &query {
-        commands.entity(entity).despawn();
+        commands.entity(entity).despawn_recursive();
     }
 }
 
-fn spawn_message_box(commands: &mut Commands, message: String) {
+fn reset(mut scoreboard: ResMut<Scoreboard>, mut timer: ResMut<MoveTimer>) {
+    scoreboard.score = 0;
+    scoreboard.difficulty = 0;
+    timer.set_duration(Duration::from_secs_f32(TIMER_STARTING_DURATION));
+}
+
+#[derive(Component, Default)]
+struct StartupMessage;
+
+impl Message for StartupMessage {
+    fn get_message() -> String {
+        String::from(r#"USE WASD OR ARROW KEYS TO CONTROL THE SNAKE
+PRESS SPACE TO PAUSE OR UNPAUSE THE GAME
+PRESS ESC TO EXIT
+PRESS SPACE TO CONTINUE"#)
+    }
+}
+
+#[derive(Component, Default)]
+struct PausedMessage;
+
+impl Message for PausedMessage {
+    fn get_message() -> String {
+        String::from("PAUSED")
+    }
+}
+
+#[derive(Component, Default)]
+struct GameOverMessage;
+
+impl Message for GameOverMessage {
+    fn get_message() -> String {
+        String::from("GAME OVER\nPRESS R TO RESTART OR ESC TO EXIT")
+    }
+}
+
+trait Message {
+    fn get_message() -> String;
+}
+
+fn spawn_message<T: Component + Message + Default>(mut commands: Commands) {
     commands
         .spawn((
             SpriteBundle {
@@ -535,14 +590,14 @@ fn spawn_message_box(commands: &mut Commands, message: String) {
                 transform: Transform::from_translation(Vec3::Z),
                 ..default()
             },
-            MessageBox,
+            T::default(),
         ))
         .with_children(|builder| {
             builder.spawn((
                 Text2dBundle {
                     text: Text {
                         sections: vec![TextSection::new(
-                            message,
+                            T::get_message(),
                             TextStyle {
                                 font_size: MESSAGE_BOX_FONT_SIZE,
                                 color: MESSAGE_BOX_TEXT_COLOR,
@@ -555,10 +610,9 @@ fn spawn_message_box(commands: &mut Commands, message: String) {
                     text_2d_bounds: Text2dBounds {
                         size: MESSAGE_BOX_SIZE,
                     },
-                    transform: Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)),
+                    transform: Transform::from_translation(Vec3::Z * Vec3::splat(2.0)),
                     ..default()
                 },
-                MessageBox,
             ));
         });
 }
