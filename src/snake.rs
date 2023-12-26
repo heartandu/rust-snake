@@ -60,7 +60,7 @@ impl Plugin for SnakeApp {
             .add_systems(OnEnter(GameState::GameOver), spawn_message::<GameOverMessage>)
             .add_systems(OnExit(GameState::GameOver), (
                 despawn::<GameOverMessage>,
-                despawn::<GameComponent>,
+                despawn::<GameComponents>,
                 reset,
                 setup,
             ))
@@ -78,7 +78,7 @@ enum GameState {
 }
 
 #[derive(Component)]
-struct GameComponent;
+struct GameComponents;
 
 #[derive(Resource, Deref, DerefMut)]
 struct MoveTimer(Timer);
@@ -92,7 +92,7 @@ struct SnakeBundle {
     snake: Snake,
     direction: Direction,
     collider: Collider,
-    game_component: GameComponent,
+    game_component: GameComponents,
 }
 
 impl SnakeBundle {
@@ -102,7 +102,7 @@ impl SnakeBundle {
             snake: Snake(id),
             direction,
             collider: Collider,
-            game_component: GameComponent,
+            game_component: GameComponents,
         }
     }
 }
@@ -115,7 +115,7 @@ struct MouseBundle {
     block_bundle: BlockBundle,
     mouse: Mouse,
     collider: Collider,
-    game_component: GameComponent,
+    game_component: GameComponents,
 }
 
 impl MouseBundle {
@@ -136,7 +136,7 @@ impl MouseBundle {
             ),
             mouse: Mouse,
             collider: Collider,
-            game_component: GameComponent,
+            game_component: GameComponents,
         }
     }
 }
@@ -231,7 +231,7 @@ struct Velocity(Vec2);
 struct WallBundle {
     sprite_bundle: SpriteBundle,
     collider: Collider,
-    game_component: GameComponent,
+    game_component: GameComponents,
 }
 
 impl WallBundle {
@@ -250,7 +250,7 @@ impl WallBundle {
                 ..default()
             },
             collider: Collider,
-            game_component: GameComponent,
+            game_component: GameComponents,
         }
     }
 }
@@ -305,9 +305,6 @@ struct Scoreboard {
 
 #[derive(Component)]
 struct ScoreboardComponent;
-
-#[derive(Component)]
-struct MessageBox;
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
@@ -386,7 +383,7 @@ fn setup(mut commands: Commands) {
             ..default()
         }),
         ScoreboardComponent,
-        GameComponent,
+        GameComponents,
     ));
 }
 
